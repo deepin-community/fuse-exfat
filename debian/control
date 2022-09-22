@@ -1,0 +1,19 @@
+Source: fuse-exfat
+Section: otherosfs
+Priority: optional
+Maintainer: Sven Hoexter <hoexter@debian.org>
+Build-Depends: debhelper-compat (= 13), libfuse-dev, pkg-config
+Rules-Requires-Root: no
+Standards-Version: 4.5.0
+Homepage: https://github.com/relan/exfat
+Vcs-Git: https://git.sven.stormbind.net/fuse-exfat.git
+Vcs-Browser: https://git.sven.stormbind.net/?p=sven/fuse-exfat.git
+
+Package: exfat-fuse
+Architecture: linux-any kfreebsd-any
+Depends: ${shlibs:Depends}, ${misc:Depends}, fuse
+Recommends: exfat-utils
+Description: read and write exFAT driver for FUSE
+ fuse-exfat is a read and write driver implementing
+ the extended file allocation table as a filesystem in userspace.
+ A mounthelper is provided unter the name mount.exfat-fuse.
