@@ -3,7 +3,7 @@
 	exFAT file system implementation library.
 
 	Free exFAT implementation.
-	Copyright (C) 2010-2018  Andrew Nayenko
+	Copyright (C) 2010-2023  Andrew Nayenko
 
 	This program is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -87,7 +87,7 @@ static int read_entries(struct exfat* ef, struct exfat_node* dir,
 
 	size = exfat_generic_pread(ef, dir, entries,
 			sizeof(struct exfat_entry[n]), offset);
-	if (size == sizeof(struct exfat_entry[n]))
+	if (size == (ssize_t) sizeof(struct exfat_entry) * n)
 		return 0; /* success */
 	if (size == 0)
 		return -ENOENT;
@@ -108,7 +108,7 @@ static int write_entries(struct exfat* ef, struct exfat_node* dir,
 
 	size = exfat_generic_pwrite(ef, dir, entries,
 			sizeof(struct exfat_entry[n]), offset);
-	if (size == sizeof(struct exfat_entry[n]))
+	if (size == (ssize_t) sizeof(struct exfat_entry) * n)
 		return 0; /* success */
 	if (size < 0)
 		return -EIO;
@@ -135,14 +135,16 @@ static void init_node_meta1(struct exfat_node* node,
 	node->attrib = le16_to_cpu(meta1->attrib);
 	node->continuations = meta1->continuations;
 	node->mtime = exfat_exfat2unix(meta1->mdate, meta1->mtime,
-			meta1->mtime_cs);
+			meta1->mtime_cs, meta1->mtime_tzo);
 	/* there is no centiseconds field for atime */
-	node->atime = exfat_exfat2unix(meta1->adate, meta1->atime, 0);
+	node->atime = exfat_exfat2unix(meta1->adate, meta1->atime,
+			0, meta1->atime_tzo);
 }
 
 static void init_node_meta2(struct exfat_node* node,
 		const struct exfat_entry_meta2* meta2)
 {
+	node->valid_size = le64_to_cpu(meta2->valid_size);
 	node->size = le64_to_cpu(meta2->size);
 	node->start_cluster = le32_to_cpu(meta2->start_cluster);
 	node->fptr_cluster = node->start_cluster;
@@ -205,8 +207,7 @@ static bool check_entries(const struct exfat_entry* entry, int n)
 }
 
 static bool check_node(const struct exfat* ef, struct exfat_node* node,
-		le16_t actual_checksum, const struct exfat_entry_meta1* meta1,
-		const struct exfat_entry_meta2* meta2)
+		le16_t actual_checksum, const struct exfat_entry_meta1* meta1)
 {
 	int cluster_size = CLUSTER_SIZE(*ef->sb);
 	uint64_t clusters_heap_size =
@@ -233,12 +234,11 @@ static bool check_node(const struct exfat* ef, struct exfat_node* node,
 	   cannot be greater than file size. See SetFileValidData() function
 	   description in MSDN.
 	*/
-	if (le64_to_cpu(meta2->valid_size) > node->size)
+	if (node->valid_size > node->size)
 	{
 		exfat_get_name(node, buffer);
 		exfat_error("'%s' has valid size (%"PRIu64") greater than size "
-				"(%"PRIu64")", buffer, le64_to_cpu(meta2->valid_size),
-				node->size);
+				"(%"PRIu64")", buffer, node->valid_size, node->size);
 		ret = false;
 	}
 
@@ -327,7 +327,7 @@ static int parse_file_entries(struct exfat* ef, struct exfat_node* node,
 	init_node_meta2(node, meta2);
 	init_node_name(node, entries + 2, mandatory_entries - 2);
 
-	if (!check_node(ef, node, exfat_calc_checksum(entries, n), meta1, meta2))
+	if (!check_node(ef, node, exfat_calc_checksum(entries, n), meta1))
 		return -EIO;
 
 	return 0;
@@ -395,6 +395,7 @@ static int readdir(struct exfat* ef, struct exfat_node* parent,
 	const struct exfat_entry_label* label;
 	uint64_t upcase_size = 0;
 	le16_t* upcase_comp = NULL;
+	le16_t label_name[EXFAT_ENAME_MAX];
 
 	for (;;)
 	{
@@ -507,7 +508,10 @@ static int readdir(struct exfat* ef, struct exfat_node* parent,
 				exfat_error("too long label (%hhu chars)", label->length);
 				return -EIO;
 			}
-			if (utf16_to_utf8(ef->label, label->name,
+			/* copy to a temporary buffer to avoid unaligned access to a
+			   packed member */
+			memcpy(label_name, label->name, sizeof(label_name));
+			if (exfat_utf16_to_utf8(ef->label, label_name,
 						sizeof(ef->label), EXFAT_ENAME_MAX) != 0)
 				return -EIO;
 			break;
@@ -627,6 +631,7 @@ int exfat_flush_node(struct exfat* ef, struct exfat_node* node)
 	struct exfat_entry_meta1* meta1 = (struct exfat_entry_meta1*) &entries[0];
 	struct exfat_entry_meta2* meta2 = (struct exfat_entry_meta2*) &entries[1];
 	int rc;
+	le16_t edate, etime;
 
 	if (!node->is_dirty)
 		return 0; /* no need to flush */
@@ -645,10 +650,16 @@ int exfat_flush_node(struct exfat* ef, struct exfat_node* node)
 		return -EIO;
 
 	meta1->attrib = cpu_to_le16(node->attrib);
-	exfat_unix2exfat(node->mtime, &meta1->mdate, &meta1->mtime,
-			&meta1->mtime_cs);
-	exfat_unix2exfat(node->atime, &meta1->adate, &meta1->atime, NULL);
-	meta2->size = meta2->valid_size = cpu_to_le64(node->size);
+	exfat_unix2exfat(node->mtime, &edate, &etime,
+			&meta1->mtime_cs, &meta1->mtime_tzo);
+	meta1->mdate = edate;
+	meta1->mtime = etime;
+	exfat_unix2exfat(node->atime, &edate, &etime,
+			NULL, &meta1->atime_tzo);
+	meta1->adate = edate;
+	meta1->atime = etime;
+	meta2->valid_size = cpu_to_le64(node->valid_size);
+	meta2->size = cpu_to_le64(node->size);
 	meta2->start_cluster = cpu_to_le32(node->start_cluster);
 	meta2->flags = EXFAT_FLAG_ALWAYS1;
 	/* empty files must not be marked as contiguous */
@@ -730,7 +741,7 @@ static int shrink_directory(struct exfat* ef, struct exfat_node* dir,
 		/* two subentries with meta info */
 		entries += 2;
 		/* subentries with file name */
-		entries += DIV_ROUND_UP(utf16_length(last_node->name),
+		entries += DIV_ROUND_UP(exfat_utf16_length(last_node->name),
 				EXFAT_ENAME_MAX);
 	}
 
@@ -798,7 +809,7 @@ static int check_slot(struct exfat* ef, struct exfat_node* dir, off_t offset,
 {
 	struct exfat_entry entries[n];
 	int rc;
-	size_t i;
+	int i;
 
 	/* Root directory contains entries, that don't have any nodes associated
 	   with them (clusters bitmap, upper case table, label). We need to be
@@ -836,7 +847,7 @@ static int find_slot(struct exfat* ef, struct exfat_node* dir,
 		return -ENOMEM;
 	}
 	for (p = dir->child; p != NULL; p = p->next)
-		for (i = 0; i < 1 + p->continuations; i++)
+		for (i = 0; i < 1u + p->continuations; i++)
 			BMAP_SET(dmap, p->entry_offset / sizeof(struct exfat_entry) + i);
 
 	/* find a slot in the directory entries bitmap */
@@ -847,21 +858,24 @@ static int find_slot(struct exfat* ef, struct exfat_node* dir,
 			if (contiguous++ == 0)
 				*offset = (off_t) i * sizeof(struct exfat_entry);
 			if (contiguous == n)
+			{
+				int rc;
+
 				/* suitable slot is found, check that it's not occupied */
-				switch (check_slot(ef, dir, *offset, n))
+				rc = check_slot(ef, dir, *offset, n);
+				if (rc == -EINVAL)
 				{
-				case 0:
-					free(dmap);
-					return 0;
-				case -EIO:
-					free(dmap);
-					return -EIO;
-				case -EINVAL:
 					/* slot at (i-n) is occupied, go back and check (i-n+1) */
 					i -= contiguous - 1;
 					contiguous = 0;
-					break;
 				}
+				else
+				{
+					/* slot is free or an error occurred */
+					free(dmap);
+					return rc;
+				}
+			}
 		}
 		else
 			contiguous = 0;
@@ -881,24 +895,26 @@ static int commit_entry(struct exfat* ef, struct exfat_node* dir,
 		const le16_t* name, off_t offset, uint16_t attrib)
 {
 	struct exfat_node* node;
-	const size_t name_length = utf16_length(name);
+	const size_t name_length = exfat_utf16_length(name);
 	const int name_entries = DIV_ROUND_UP(name_length, EXFAT_ENAME_MAX);
 	struct exfat_entry entries[2 + name_entries];
 	struct exfat_entry_meta1* meta1 = (struct exfat_entry_meta1*) &entries[0];
 	struct exfat_entry_meta2* meta2 = (struct exfat_entry_meta2*) &entries[1];
 	int i;
 	int rc;
+	le16_t edate, etime;
 
 	memset(entries, 0, sizeof(struct exfat_entry[2]));
 
 	meta1->type = EXFAT_ENTRY_FILE;
 	meta1->continuations = 1 + name_entries;
 	meta1->attrib = cpu_to_le16(attrib);
-	exfat_unix2exfat(time(NULL), &meta1->crdate, &meta1->crtime,
-			&meta1->crtime_cs);
-	meta1->adate = meta1->mdate = meta1->crdate;
-	meta1->atime = meta1->mtime = meta1->crtime;
+	exfat_unix2exfat(time(NULL), &edate, &etime,
+			&meta1->crtime_cs, &meta1->crtime_tzo);
+	meta1->adate = meta1->mdate = meta1->crdate = edate;
+	meta1->atime = meta1->mtime = meta1->crtime = etime;
 	meta1->mtime_cs = meta1->crtime_cs; /* there is no atime_cs */
+	meta1->atime_tzo = meta1->mtime_tzo = meta1->crtime_tzo;
 
 	meta2->type = EXFAT_ENTRY_FILE_INFO;
 	meta2->flags = EXFAT_FLAG_ALWAYS1;
@@ -953,7 +969,7 @@ static int create(struct exfat* ef, const char* path, uint16_t attrib)
 	}
 
 	rc = find_slot(ef, dir, &offset,
-			2 + DIV_ROUND_UP(utf16_length(name), EXFAT_ENAME_MAX));
+			2 + DIV_ROUND_UP(exfat_utf16_length(name), EXFAT_ENAME_MAX));
 	if (rc != 0)
 	{
 		exfat_put_node(ef, dir);
@@ -1009,7 +1025,7 @@ int exfat_mkdir(struct exfat* ef, const char* path)
 static int rename_entry(struct exfat* ef, struct exfat_node* dir,
 		struct exfat_node* node, const le16_t* name, off_t new_offset)
 {
-	const size_t name_length = utf16_length(name);
+	const size_t name_length = exfat_utf16_length(name);
 	const int name_entries = DIV_ROUND_UP(name_length, EXFAT_ENAME_MAX);
 	struct exfat_entry entries[2 + name_entries];
 	struct exfat_entry_meta1* meta1 = (struct exfat_entry_meta1*) &entries[0];
@@ -1112,7 +1128,7 @@ int exfat_rename(struct exfat* ef, const char* old_path, const char* new_path)
 			exfat_put_node(ef, existing);
 			if (rc != 0)
 			{
-				/* free clusters even if something went wrong; overwise they
+				/* free clusters even if something went wrong; otherwise they
 				   will be just lost */
 				exfat_cleanup_node(ef, existing);
 				exfat_put_node(ef, dir);
@@ -1132,7 +1148,7 @@ int exfat_rename(struct exfat* ef, const char* old_path, const char* new_path)
 	}
 
 	rc = find_slot(ef, dir, &offset,
-			2 + DIV_ROUND_UP(utf16_length(name), EXFAT_ENAME_MAX));
+			2 + DIV_ROUND_UP(exfat_utf16_length(name), EXFAT_ENAME_MAX));
 	if (rc != 0)
 	{
 		exfat_put_node(ef, dir);
@@ -1201,7 +1217,8 @@ int exfat_set_label(struct exfat* ef, const char* label)
 	struct exfat_entry_label entry;
 
 	memset(label_utf16, 0, sizeof(label_utf16));
-	rc = utf8_to_utf16(label_utf16, label, EXFAT_ENAME_MAX + 1, strlen(label));
+	rc = exfat_utf8_to_utf16(label_utf16, label, EXFAT_ENAME_MAX + 1,
+			strlen(label));
 	if (rc != 0)
 		return rc;
 
@@ -1212,7 +1229,7 @@ int exfat_set_label(struct exfat* ef, const char* label)
 		return rc;
 
 	entry.type = EXFAT_ENTRY_LABEL;
-	entry.length = utf16_length(label_utf16);
+	entry.length = exfat_utf16_length(label_utf16);
 	memcpy(entry.name, label_utf16, sizeof(entry.name));
 	if (entry.length == 0)
 		entry.type ^= EXFAT_ENTRY_VALID;

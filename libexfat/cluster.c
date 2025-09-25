@@ -3,7 +3,7 @@
 	exFAT file system implementation library.
 
 	Free exFAT implementation.
-	Copyright (C) 2010-2018  Andrew Nayenko
+	Copyright (C) 2010-2023  Andrew Nayenko
 
 	This program is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -122,7 +122,7 @@ static cluster_t find_bit_and_set(bitmap_t* bitmap, size_t start, size_t end)
 
 	for (i = start_index; i < end_index; i++)
 	{
-		if (bitmap[i] == ~((bitmap_t) 0))
+		if (bitmap[i] == (bitmap_t) ~((bitmap_t) 0))
 			continue;
 		start_bitindex = MAX(i * sizeof(bitmap_t) * 8, start);
 		end_bitindex = MIN((i + 1) * sizeof(bitmap_t) * 8, end);
@@ -280,7 +280,7 @@ static int grow_file(struct exfat* ef, struct exfat_node* node,
 				shrink_file(ef, node, current + allocated, allocated);
 			return -ENOSPC;
 		}
-		if (next != previous - 1 && node->is_contiguous)
+		if (next != previous + 1 && node->is_contiguous)
 		{
 			/* it's a pity, but we are not able to keep the file contiguous
 			   anymore */
@@ -426,9 +426,14 @@ int exfat_truncate(struct exfat* ef, struct exfat_node* node, uint64_t size,
 
 	if (erase)
 	{
-		rc = erase_range(ef, node, node->size, size);
+		rc = erase_range(ef, node, node->valid_size, size);
 		if (rc != 0)
 			return rc;
+		node->valid_size = size;
+	}
+	else
+	{
+		node->valid_size = MIN(node->valid_size, size);
 	}
 
 	exfat_update_mtime(node);

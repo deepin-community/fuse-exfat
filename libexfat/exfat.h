@@ -4,7 +4,7 @@
 	implementation.
 
 	Free exFAT implementation.
-	Copyright (C) 2010-2018  Andrew Nayenko
+	Copyright (C) 2010-2023  Andrew Nayenko
 
 	This program is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -89,6 +89,7 @@ struct exfat_node
 	bool is_cached : 1;
 	bool is_dirty : 1;
 	bool is_unlinked : 1;
+	uint64_t valid_size;
 	uint64_t size;
 	time_t mtime, atime;
 	le16_t name[EXFAT_NAME_MAX + 1];
@@ -201,12 +202,13 @@ le16_t exfat_calc_name_hash(const struct exfat* ef, const le16_t* name,
 void exfat_humanize_bytes(uint64_t value, struct exfat_human_bytes* hb);
 void exfat_print_info(const struct exfat_super_block* sb,
 		uint32_t free_clusters);
+bool exfat_match_option(const char* options, const char* option_name);
 
-int utf16_to_utf8(char* output, const le16_t* input, size_t outsize,
+int exfat_utf16_to_utf8(char* output, const le16_t* input, size_t outsize,
 		size_t insize);
-int utf8_to_utf16(le16_t* output, const char* input, size_t outsize,
+int exfat_utf8_to_utf16(le16_t* output, const char* input, size_t outsize,
 		size_t insize);
-size_t utf16_length(const le16_t* str);
+size_t exfat_utf16_length(const le16_t* str);
 
 struct exfat_node* exfat_get_node(struct exfat_node* node);
 void exfat_put_node(struct exfat* ef, struct exfat_node* node);
@@ -225,12 +227,14 @@ void exfat_update_mtime(struct exfat_node* node);
 const char* exfat_get_label(struct exfat* ef);
 int exfat_set_label(struct exfat* ef, const char* label);
 
+int exfat_soil_super_block(const struct exfat* ef);
 int exfat_mount(struct exfat* ef, const char* spec, const char* options);
 void exfat_unmount(struct exfat* ef);
 
-time_t exfat_exfat2unix(le16_t date, le16_t time, uint8_t centisec);
+time_t exfat_exfat2unix(le16_t date, le16_t time, uint8_t centisec,
+		uint8_t tzoffset);
 void exfat_unix2exfat(time_t unix_time, le16_t* date, le16_t* time,
-		uint8_t* centisec);
+		uint8_t* centisec, uint8_t* tzoffset);
 void exfat_tzset(void);
 
 bool exfat_ask_to_fix(const struct exfat* ef);
