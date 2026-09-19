@@ -1,3 +1,49 @@
+fuse-exfat (1.4.0-3) unstable; urgency=medium
+
+  * UsrMerge, install with prefix /usr. (Closes: #1073755)
+  * Build depend on pkgconf instead of pkg-config.
+  * Update Standards-Version to 4.7.0 - no changes required.
+
+ -- Sven Hoexter <hoexter@debian.org>  Tue, 18 Jun 2024 13:25:35 +0200
+
+fuse-exfat (1.4.0-2) unstable; urgency=medium
+
+  * Drop kfreebsd-any from the architecture list since it's going to
+    vanish soon.
+  * Drop explicit dependency on the fuse binary package, not required
+    and should've been fuse3 by now.
+
+ -- Sven Hoexter <hoexter@debian.org>  Wed, 14 Jun 2023 17:35:16 +0200
+
+fuse-exfat (1.4.0-1) experimental; urgency=medium
+
+  * New upstream release, includes fix for
+    CVE-2022-29973 (Closes: #1014538).
+  * Update debian/watch to query the GitHub API.
+  * Build-Depend on libfuse3-dev. Supported upstream starting with
+    1.4.0.
+  * Update debian/copyright. Drop year from my own copyright line.
+  * Update Standards-Version to 4.6.2.
+
+ -- Sven Hoexter <hoexter@debian.org>  Fri, 03 Mar 2023 15:43:18 +0100
+
+fuse-exfat (1.3.0+git20220115-2) unstable; urgency=medium
+
+  * Upload to unstable to give it a bit more exposure.
+
+ -- Sven Hoexter <hoexter@debian.org>  Sat, 22 Jan 2022 20:14:20 +0100
+
+fuse-exfat (1.3.0+git20220115-1) experimental; urgency=medium
+
+  * Snapshot from upstream git repo at commit
+    11e4f032d1782a606e3b004c89990a72cadf91bf
+  * Update Standards-Version to 4.6.0 - no changes required.
+  * Update debian/copyright to 2022.
+  * Update debian/watch to version 4.
+  * Recommend exfatprogs instead of the removed exfat-utils.
+
+ -- Sven Hoexter <hoexter@debian.org>  Sat, 15 Jan 2022 22:16:22 +0100
+
 fuse-exfat (1.3.0-2) unstable; urgency=medium
 
   * Drop "mount.exfat" symlink to the mount helper in the

@@ -3,7 +3,7 @@
 	exFAT file system implementation library.
 
 	Free exFAT implementation.
-	Copyright (C) 2010-2018  Andrew Nayenko
+	Copyright (C) 2010-2023  Andrew Nayenko
 
 	This program is free software; you can redistribute it and/or modify
 	it under the terms of the GNU General Public License as published by
@@ -77,7 +77,7 @@ bool exfat_fix_invalid_vbr_checksum(const struct exfat* ef, void* sector,
 	return true;
 }
 
-bool exfat_fix_invalid_node_checksum(const struct exfat* ef,
+bool exfat_fix_invalid_node_checksum(UNUSED const struct exfat* ef,
 		struct exfat_node* node)
 {
 	/* checksum will be rewritten by exfat_flush_node() */
